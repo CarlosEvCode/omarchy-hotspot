@@ -1,34 +1,36 @@
 # Wi-Fi Hotspot & Repeater for Omarchy (`evcode.hotspot`)
 
-A native, high-performance status bar widget and interactive control panel for the [Omarchy](https://omarchy.org/) desktop shell. Create and manage Wi-Fi Hotspots and **simultaneous Wi-Fi Repeater chaining** directly from your top bar with dynamic upstream source routing, instant QR code pairing, real-time connected client monitor, and complete Omarchy theme integration.
+A native status bar widget and control center for the [Omarchy](https://omarchy.org/) desktop shell. It provides access point creation, simultaneous **Wi-Fi Repeater chaining**, dynamic upstream source selection, real-time client monitoring, and instant QR code pairing.
+
+![Wi-Fi Hotspot & Repeater Preview](preview.png)
 
 ---
 
-## 🚀 Key Features
+## Features
 
-- 📡 **Simultaneous Wi-Fi Repeater & AP Chaining**:
-  - Keep your active Wi-Fi connection alive while simultaneously broadcasting a secondary access point without needing third-party AUR daemons.
-  - Automatic on-demand `ap0` interface lifecycle management (created only when active, destroyed when stopped).
-- 🔀 **Dynamic Upstream Internet Selection**:
-  - Route internet from **Automatic**, **Ethernet** (`enp...`), or **Wi-Fi** (`wlo...`).
-  - Dropdown dynamically lists only active, connected interfaces in real-time.
-- 📲 **Instant QR Code Sharing**:
-  - Crisp, scannable QR matrix rendered directly in QML for instant smartphone pairing (iOS & Android).
-  - One-click copy buttons for SSID and WPA2 passphrase.
-- 👥 **Connected Devices & Traffic Monitor**:
-  - Live list of connected devices with Hostname, IP address, and MAC address.
-  - Wi-Fi signal strength meter (dBm with adaptive icons `󰤨`, `󰤥`, `󰤢`, `󰤟`).
-  - Real-time download/upload traffic counters and connection duration.
-- ⚙️ **Inline Network Settings**:
-  - Customize SSID, WPA2-PSK password (with toggle visibility), and Wi-Fi frequency band (2.4 GHz / 5 GHz).
-- 🎨 **100% Theme Integrated**:
-  - Strictly follows Omarchy theme tokens (`root.bar.foreground`, `root.bar.background`, `Color.accent`, `root.bar.urgent`). Zero hardcoded colors.
+- **Simultaneous Wi-Fi Repeater (STA + AP)**:
+  Maintains your active Wi-Fi connection while simultaneously broadcasting a virtual access point (`ap0`). Works out of the box using standard Linux networking tools without third-party AUR daemons.
+
+- **Dynamic Upstream Internet Selection**:
+  Allows routing shared internet through **Automatic**, **Ethernet**, or **Wi-Fi**. The selector dynamically displays only active and connected interfaces.
+
+- **Integrated QR Code Pairing**:
+  Generates a high-contrast QR matrix directly within the interface for fast smartphone connection (iOS and Android), along with quick copy buttons for network credentials.
+
+- **Client & Traffic Monitoring**:
+  Displays connected stations in real time, including Hostname, IP address, MAC address, signal strength (dBm), and live traffic counters.
+
+- **Lifecycle Management**:
+  Automatically creates the virtual AP interface (`ap0`) when starting and removes it when stopped, preventing interference with regular Wi-Fi scans.
+
+- **Omarchy Theme Integration**:
+  Uses active shell theme variables (`root.bar.foreground`, `root.bar.background`, `Color.accent`, `root.bar.urgent`) to match your desktop environment seamlessly.
 
 ---
 
-## 📦 Dependencies
+## Prerequisites
 
-Install the core networking and QR tools via `pacman`:
+The plugin requires standard Linux networking utilities available in official Arch Linux repositories:
 
 ```bash
 sudo pacman -S --needed networkmanager iw iproute2 qrencode
@@ -36,38 +38,53 @@ sudo pacman -S --needed networkmanager iw iproute2 qrencode
 
 ---
 
-## 🛠️ Installation
+## Installation
 
-### Option 1: Via Omarchy Plugin Manager (Recommended once published)
+### Via Omarchy Plugin Manager
+
 ```bash
-omarchy plugin add https://github.com/evcode/omarchy-hotspot.git --enable
+omarchy plugin add https://github.com/CarlosEvCode/omarchy-hotspot.git --enable
 omarchy restart shell
 ```
 
-### Option 2: Automatic Local Installer
-Clone this repository and run the included installer:
+### Manual / Local Installation
+
+Clone the repository and run the included installation script:
+
 ```bash
-git clone https://github.com/evcode/omarchy-hotspot.git
+git clone https://github.com/CarlosEvCode/omarchy-hotspot.git
 cd omarchy-hotspot
 chmod +x install.sh
 ./install.sh
 ```
 
-The installer will automatically:
-1. Verify and install any missing system dependencies.
-2. Configure passwordless `sudoers.d` rules for virtual AP interface management (`ap0`).
+The script will automatically:
+1. Validate required system dependencies.
+2. Configure passwordless `sudoers.d` rules for virtual interface handling (`ap0`).
 3. Deploy the backend CLI helper to `~/.local/bin/omarchy-hotspot`.
-4. Install and enable the plugin in `~/.config/omarchy/plugins/evcode.hotspot/`.
-5. Clear QML cache and restart Omarchy Shell.
+4. Install the plugin into `~/.config/omarchy/plugins/evcode.hotspot/`.
+5. Reload the Omarchy Shell.
 
 ---
 
-## 💻 CLI Helper Usage
+## Controls and Keybindings
 
-The backend can be controlled or scripted directly via `omarchy-hotspot`:
+| Action | Control |
+|---|---|
+| Open / Close Hotspot Panel | Left Click on bar widget |
+| Quick Power Toggle | Right Click on bar widget |
+| Dismiss Panel | `Esc` key or click outside |
+| Toggle QR Code View | Click **Ver QR** |
+| Configure Network Settings | Click **Ajustes** |
+
+---
+
+## CLI Helper Reference
+
+The backend can also be operated directly from the terminal via `omarchy-hotspot`:
 
 ```bash
-# View complete JSON state (SSID, IP, upstream, clients, QR matrix)
+# Display JSON status (SSID, IP, upstream source, client list, QR matrix)
 omarchy-hotspot status
 
 # Start / Stop / Toggle Hotspot
@@ -78,24 +95,12 @@ omarchy-hotspot toggle
 # List connected clients
 omarchy-hotspot clients
 
-# Save default hotspot configuration
-omarchy-hotspot save "MyHotspot" "mypassword123" "bg" "0" "wpa-psk" "auto"
+# Persist default configuration
+omarchy-hotspot save "MyHotspot" "password123" "bg" "0" "wpa-psk" "auto"
 ```
 
 ---
 
-## ⌨️ Controls & Shortcuts
-
-| Action | Control |
-|---|---|
-| Open / Close Hotspot Panel | Left Click on bar widget |
-| Toggle Hotspot Power On / Off | Right Click on bar widget |
-| Dismiss Panel | `Esc` key or click outside |
-| Toggle QR Code Overlay | Click **󰤨 Ver QR** |
-| Configure SSID & Password | Click **󰒓 Ajustes** |
-
----
-
-## 📄 License
+## License
 
 [MIT](LICENSE) © 2026 evcode
