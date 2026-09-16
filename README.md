@@ -87,16 +87,16 @@ The backend can also be operated directly from the terminal via `omarchy-hotspot
 # Display JSON status (SSID, IP, upstream source, client list, QR matrix)
 omarchy-hotspot status
 
-# Start / Stop / Toggle Hotspot
-omarchy-hotspot start [SSID] [PASSWORD] [BAND] [CHANNEL] [SECURITY] [UPSTREAM]
+# Start / Stop / Toggle Hotspot (reads PSK from stdin or saved config)
+printf "%s\n" "mypassword123" | omarchy-hotspot start [SSID] [BAND] [CHANNEL] [SECURITY] [UPSTREAM]
 omarchy-hotspot stop
 omarchy-hotspot toggle
 
 # List connected clients
 omarchy-hotspot clients
 
-# Persist default configuration
-omarchy-hotspot save "MyHotspot" "password123" "bg" "0" "wpa-psk" "auto"
+# Persist default configuration securely (PSK passed via stdin)
+printf "%s\n" "mypassword123" | omarchy-hotspot save "MyHotspot" "bg" "0" "wpa-psk" "auto"
 ```
 
 ---

@@ -2,22 +2,30 @@
 
 # omarchy:summary=Wi-Fi Hotspot & Internet Sharing/Repeater backend for Omarchy
 # omarchy:group=hotspot
-# omarchy:args=[status|start|stop|toggle|clients|qr|save-config]
+# omarchy:args=[status|start|stop|toggle|clients|qr|save|set-upstream]
 
 set -euo pipefail
 
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy"
 CONFIG_FILE="$CONFIG_DIR/hotspot.json"
 PROFILE_NAME="OmarchyHotspot"
+AP_HELPER="/usr/local/bin/omarchy-hotspot-ap-helper"
 
-# Ensure config directory exists
+# Ensure config directory exists with strict permissions
 mkdir -p "$CONFIG_DIR"
+chmod 0700 "$CONFIG_DIR" 2>/dev/null || true
+
+# Repair existing config file permissions if present
+if [[ -f "$CONFIG_FILE" ]]; then
+  chmod 0600 "$CONFIG_FILE" 2>/dev/null || true
+fi
 
 # Default configuration getter
 get_config() {
   local key="$1"
   local default_val="$2"
   if [[ -f "$CONFIG_FILE" ]]; then
+    chmod 0600 "$CONFIG_FILE" 2>/dev/null || true
     val=$(jq -r --arg k "$key" '.[$k] // empty' "$CONFIG_FILE" 2>/dev/null || true)
     if [[ -n "$val" ]]; then
       echo "$val"
@@ -27,7 +35,7 @@ get_config() {
   echo "$default_val"
 }
 
-# Save configuration
+# Save configuration atomically with mode 0600
 save_config() {
   local ssid="$1"
   local password="$2"
@@ -35,6 +43,16 @@ save_config() {
   local channel="${4:-0}"
   local security="${5:-wpa-psk}"
   local upstream_pref="${6:-auto}"
+
+  mkdir -p "$CONFIG_DIR"
+  chmod 0700 "$CONFIG_DIR" 2>/dev/null || true
+
+  local tmp_file
+  tmp_file=$(
+    umask 077
+    mktemp "$CONFIG_DIR/hotspot.json.tmp.XXXXXX"
+  )
+  chmod 0600 "$tmp_file"
 
   jq -n \
     --arg ssid "$ssid" \
@@ -50,7 +68,10 @@ save_config() {
       channel: $channel,
       security: $security,
       upstream_preference: $upstream_pref
-    }' > "$CONFIG_FILE"
+    }' > "$tmp_file"
+
+  mv -f "$tmp_file" "$CONFIG_FILE"
+  chmod 0600 "$CONFIG_FILE"
 }
 
 # Find primary Wi-Fi interface (STA client)
@@ -72,6 +93,31 @@ get_ap_iface() {
   local p
   p=$(get_primary_wifi)
   echo "${p:-wlo1}"
+}
+
+# Lifecycle helper for virtual AP interface (ap0)
+ensure_ap0_created() {
+  if ip link show ap0 >/dev/null 2>&1; then
+    return 0
+  fi
+  if [[ -x "$AP_HELPER" ]]; then
+    sudo -n "$AP_HELPER" add 2>/dev/null || true
+  else
+    sudo -n iw phy phy0 interface add ap0 type __ap 2>/dev/null || true
+    sudo -n ip link set ap0 up 2>/dev/null || true
+  fi
+  sleep 0.5
+}
+
+ensure_ap0_deleted() {
+  if ! ip link show ap0 >/dev/null 2>&1; then
+    return 0
+  fi
+  if [[ -x "$AP_HELPER" ]]; then
+    sudo -n "$AP_HELPER" del 2>/dev/null || true
+  else
+    sudo -n iw dev ap0 del 2>/dev/null || true
+  fi
 }
 
 # Detect upstream internet connection details
@@ -100,84 +146,103 @@ get_upstream_info() {
     fi
   fi
 
-  local active_iface=""
   local active_type="none"
+  local active_iface=""
   local active_ip=""
   local active_name=""
 
   if [[ "$pref" == "ethernet" && -n "$eth_iface" ]]; then
-    active_iface="$eth_iface"
     active_type="ethernet"
+    active_iface="$eth_iface"
     active_ip="$eth_ip"
-    active_name="Ethernet"
+    active_name="Ethernet ($eth_iface)"
   elif [[ "$pref" == "wifi" && "$wifi_connected" == "true" ]]; then
-    active_iface="$wifi_iface"
     active_type="wifi"
+    active_iface="$wifi_iface"
     active_ip="$wifi_ip"
     active_name="$wifi_ssid"
   else
     # Auto mode: check default route
-    local route_dev
-    route_dev=$(ip route get 1.1.1.1 2>/dev/null | awk '{ for (i=1; i<=NF; i++) if ($i == "dev") { print $(i+1); exit } }')
-    if [[ -n "$route_dev" ]]; then
-      active_iface="$route_dev"
-      if [[ "$active_iface" == "$eth_iface" ]]; then
-        active_type="ethernet"
-        active_ip="$eth_ip"
-        active_name="Ethernet"
-      elif [[ "$active_iface" == "$wifi_iface" ]]; then
-        active_type="wifi"
-        active_ip="$wifi_ip"
-        active_name="$wifi_ssid"
-      else
-        active_type="other"
-        active_ip=$(ip -4 addr show dev "$active_iface" 2>/dev/null | awk '$1 == "inet" { split($2, a, "/"); print a[1]; exit }')
-        active_name="$active_iface"
-      fi
-    elif [[ -n "$eth_iface" ]]; then
-      active_iface="$eth_iface"
+    local def_route_dev
+    def_route_dev=$(ip route show default 2>/dev/null | awk '$1 == "default" { print $5; exit }')
+    if [[ -n "$def_route_dev" && "$def_route_dev" == "$eth_iface" ]]; then
       active_type="ethernet"
+      active_iface="$eth_iface"
       active_ip="$eth_ip"
-      active_name="Ethernet"
-    elif [[ "$wifi_connected" == "true" ]]; then
-      active_iface="$wifi_iface"
+      active_name="Ethernet ($eth_iface)"
+    elif [[ -n "$def_route_dev" && "$def_route_dev" == "$wifi_iface" && "$wifi_connected" == "true" ]]; then
       active_type="wifi"
+      active_iface="$wifi_iface"
+      active_ip="$wifi_ip"
+      active_name="$wifi_ssid"
+    elif [[ -n "$eth_iface" ]]; then
+      active_type="ethernet"
+      active_iface="$eth_iface"
+      active_ip="$eth_ip"
+      active_name="Ethernet ($eth_iface)"
+    elif [[ "$wifi_connected" == "true" ]]; then
+      active_type="wifi"
+      active_iface="$wifi_iface"
       active_ip="$wifi_ip"
       active_name="$wifi_ssid"
     fi
   fi
 
-  # Build dynamic upstreams list containing only active/connected interfaces
-  local upstreams_json="[]"
-  local items=()
+  jq -n \
+    --arg type "$active_type" \
+    --arg iface "$active_iface" \
+    --arg ip "$active_ip" \
+    --arg name "$active_name" \
+    '{
+      type: $type,
+      interface: $iface,
+      ip: $ip,
+      name: $name
+    }'
+}
 
+# Build dynamic upstreams list containing only active/connected interfaces
+get_dynamic_upstreams_json() {
+  local pref
+  pref=$(get_config "upstream_preference" "auto")
+  
   # Always include Auto
-  items+=("{\"id\": \"auto\", \"label\": \"Automático (Recomendado)\", \"available\": true, \"selected\": $( [[ "$pref" == "auto" ]] && echo true || echo false )}")
+  local items='[{"id":"auto","label":"Automático (Recomendado)","available":true,"selected":'$( [[ "$pref" == "auto" ]] && echo "true" || echo "false" )'}'
 
+  # Ethernet check
+  local eth_iface
+  eth_iface=$(nmcli -t -f DEVICE,TYPE,STATE device status 2>/dev/null | awk -F: '$2 == "ethernet" && $3 ~ /^connected/ { print $1; exit }')
   if [[ -n "$eth_iface" ]]; then
-    items+=("{\"id\": \"ethernet\", \"label\": \"Ethernet (${eth_ip:-$eth_iface})\", \"available\": true, \"selected\": $( [[ "$pref" == "ethernet" ]] && echo true || echo false )}")
+    items+=',{"id":"ethernet","label":"Ethernet ('"$eth_iface"')","available":true,"selected":'$( [[ "$pref" == "ethernet" ]] && echo "true" || echo "false" )'}'
   fi
 
-  if [[ "$wifi_connected" == "true" ]]; then
-    items+=("{\"id\": \"wifi\", \"label\": \"Wi-Fi (${wifi_ssid:-$wifi_iface})\", \"available\": true, \"selected\": $( [[ "$pref" == "wifi" ]] && echo true || echo false )}")
+  # Wi-Fi check
+  local wifi_iface
+  wifi_iface=$(get_primary_wifi)
+  if iw dev "$wifi_iface" info 2>/dev/null | grep -q "type managed"; then
+    local wifi_ssid
+    wifi_ssid=$(iw dev "$wifi_iface" info 2>/dev/null | awk '$1 == "ssid" { print $2; exit }')
+    if [[ -z "$wifi_ssid" ]]; then
+      wifi_ssid=$(nmcli -t -f DEVICE,CONNECTION device status 2>/dev/null | awk -F: -v dev="$wifi_iface" '$1 == dev && $2 != "" && $2 != "--" { print $2; exit }')
+    fi
+    if [[ -n "$wifi_ssid" ]]; then
+      items+=',{"id":"wifi","label":"Wi-Fi ('"$wifi_ssid"')","available":true,"selected":'$( [[ "$pref" == "wifi" ]] && echo "true" || echo "false" )'}'
+    fi
   fi
 
-  if [[ ${#items[@]} -gt 0 ]]; then
-    upstreams_json=$(IFS=,; echo "[${items[*]}]")
-  fi
-
-  echo "$active_iface|$active_type|$active_ip|$active_name|$pref|$upstreams_json"
+  items+=']'
+  echo "$items"
 }
 
 # Check if hotspot profile is currently active
 is_hotspot_active() {
   # Check if NetworkManager active connection list has OmarchyHotspot
-  if nmcli -t -f NAME,TYPE,STATE connection show --active 2>/dev/null | grep -E "^${PROFILE_NAME}:802-11-wireless:activated" >/dev/null 2>&1; then
+  if nmcli -t -f NAME,TYPE,STATE connection show --active 2>/dev/null | grep -q "^${PROFILE_NAME}:802-11-wireless:activated"; then
     return 0
   fi
   # Also check if an AP-mode interface is currently running the profile
   local ap_dev
-  ap_dev=$(nmcli -t -f DEVICE,CONNECTION,STATE device status 2>/dev/null | awk -F: -v prof="$PROFILE_NAME" '$2 == prof && $3 ~ /^connected/ { print $1; exit }')
+  ap_dev=$(nmcli -t -f DEVICE,TYPE,CONNECTION device status 2>/dev/null | awk -F: -v p="$PROFILE_NAME" '$2 == "wifi" && $3 == p { print $1; exit }')
   if [[ -n "$ap_dev" ]]; then
     return 0
   fi
@@ -188,50 +253,61 @@ is_hotspot_active() {
 generate_qr_matrix() {
   local ssid="$1"
   local password="$2"
-  local security="$3"
+  local security="${3:-wpa-psk}"
 
-  local sec_type="WPA"
+  local auth_type="WPA"
   if [[ "$security" == "open" || -z "$password" ]]; then
-    sec_type="nopass"
+    auth_type="nopass"
   fi
 
-  local esc_ssid
-  esc_ssid=$(printf '%s' "$ssid" | sed -e 's/\\/\\\\/g' -e 's/;/\\;/g' -e 's/,/\\,/g' -e 's/:/\\:/g')
-  local esc_pw
-  esc_pw=$(printf '%s' "$password" | sed -e 's/\\/\\\\/g' -e 's/;/\\;/g' -e 's/,/\\,/g' -e 's/:/\\:/g')
-
-  local payload="WIFI:T:${sec_type};S:${esc_ssid};P:${esc_pw};;"
-  if [[ "$sec_type" == "nopass" ]]; then
-    payload="WIFI:T:nopass;S:${esc_ssid};;"
+  # Format: WIFI:T:WPA;S:MySSID;P:MyPassword;;
+  local payload
+  if [[ "$auth_type" == "nopass" ]]; then
+    payload="WIFI:T:nopass;S:${ssid};;"
+  else
+    # Escape special chars: \ ; , :
+    esc_ssid=$(printf '%s' "$ssid" | sed -e 's/\\/\\\\/g' -e 's/;/\\;/g' -e 's/,/\\,/g' -e 's/:/\\:/g')
+    esc_pw=$(printf '%s' "$password" | sed -e 's/\\/\\\\/g' -e 's/;/\\;/g' -e 's/,/\\,/g' -e 's/:/\\:/g')
+    payload="WIFI:T:${auth_type};S:${esc_ssid};P:${esc_pw};;"
   fi
 
-  if command -v qrencode >/dev/null 2>&1; then
-    local ascii
-    ascii=$(printf '%s' "$payload" | qrencode --type ASCII --margin 2 --output - 2>/dev/null || true)
-    if [[ -n "$ascii" ]]; then
-      local rows=()
-      while IFS= read -r line; do
-        [[ -z "$line" ]] && continue
-        local row=""
-        for (( col=0; col<${#line}; col+=2 )); do
-          if [[ "${line:col:2}" == *"#"* ]]; then
-            row+="1"
-          else
-            row+="0"
-          fi
-        done
-        rows+=("\"$row\"")
-      done <<< "$ascii"
-      
-      local size=${#rows[@]}
-      local matrix_json
-      matrix_json=$(IFS=,; echo "[${rows[*]}]")
-      echo "{\"size\": $size, \"rows\": $matrix_json, \"payload\": \"$payload\"}"
-      return
+  if ! command -v qrencode >/dev/null 2>&1; then
+    echo '{"size": 0, "rows": [], "payload": "'"$payload"'"}'
+    return
+  fi
+
+  # Generate ASCII QR: each module is represented by 2 chars
+  local ascii_qr
+  ascii_qr=$(qrencode -m 2 -t ASCII "$payload" 2>/dev/null || true)
+  if [[ -z "$ascii_qr" ]]; then
+    echo '{"size": 0, "rows": [], "payload": "'"$payload"'"}'
+    return
+  fi
+
+  local -a rows=()
+  while IFS= read -r line; do
+    if [[ -n "$line" ]]; then
+      local row_bits=""
+      for (( col=0; col<${#line}; col+=2 )); do
+        if [[ "${line:col:2}" == *"#"* ]]; then
+          row_bits+="1"
+        else
+          row_bits+="0"
+        fi
+      done
+      rows+=("\"$row_bits\"")
     fi
-  fi
+  done <<< "$ascii_qr"
 
-  echo "{\"size\": 0, \"rows\": [], \"payload\": \"$payload\"}"
+  local size=${#rows[@]}
+  local rows_json="["
+  for (( i=0; i<size; i++ )); do
+    rows_json+="${rows[i]}"
+    if (( i < size - 1 )); then rows_json+=","; fi
+  done
+  rows_json+="]"
+
+  echo '{"size": '"$size"', "rows": '"$rows_json"', "payload": "'"$payload"'"}'
 }
 
 # Get list of connected clients
@@ -239,160 +315,167 @@ get_clients() {
   local iface="$1"
   local clients_json="[]"
 
-  if [[ -z "$iface" ]] || ! ip link show "$iface" >/dev/null 2>&1; then
+  if ! ip link show "$iface" >/dev/null 2>&1; then
     echo "$clients_json"
     return
   fi
 
-  declare -A st_signal st_rx st_tx st_time
-  local current_mac=""
+  local -a macs=()
+  local -A signal_map=()
+  local -A rx_map=()
+  local -A tx_map=()
+  local -A time_map=()
 
+  # Parse iw station dump
+  local cur_mac=""
   while IFS= read -r line; do
     if [[ "$line" =~ ^Station[[:space:]]+([0-9a-fA-F:]{17}) ]]; then
-      current_mac="${BASH_REMATCH[1]}"
-      st_signal["$current_mac"]="-60"
-      st_rx["$current_mac"]="0"
-      st_tx["$current_mac"]="0"
-      st_time["$current_mac"]="0"
-    elif [[ -n "$current_mac" ]]; then
-      if [[ "$line" =~ signal:[[:space:]]*([-\.0-9]+) ]]; then
-        st_signal["$current_mac"]="${BASH_REMATCH[1]}"
-      elif [[ "$line" =~ rx[[:space:]]+bytes:[[:space:]]*([0-9]+) ]]; then
-        st_rx["$current_mac"]="${BASH_REMATCH[1]}"
-      elif [[ "$line" =~ tx[[:space:]]+bytes:[[:space:]]*([0-9]+) ]]; then
-        st_tx["$current_mac"]="${BASH_REMATCH[1]}"
-      elif [[ "$line" =~ connected[[:space:]]+time:[[:space:]]*([0-9]+) ]]; then
-        st_time["$current_mac"]="${BASH_REMATCH[1]}"
+      cur_mac="${BASH_REMATCH[1]}"
+      macs+=("$cur_mac")
+    elif [[ -n "$cur_mac" ]]; then
+      if [[ "$line" =~ signal:[[:space:]]+(-?[0-9]+) ]]; then
+        signal_map["$cur_mac"]="${BASH_REMATCH[1]}"
+      elif [[ "$line" =~ rx[[:space:]]bytes:[[:space:]]+([0-9]+) ]]; then
+        rx_map["$cur_mac"]="${BASH_REMATCH[1]}"
+      elif [[ "$line" =~ tx[[:space:]]bytes:[[:space:]]+([0-9]+) ]]; then
+        tx_map["$cur_mac"]="${BASH_REMATCH[1]}"
+      elif [[ "$line" =~ connected[[:space:]]time:[[:space:]]+([0-9]+) ]]; then
+        time_map["$cur_mac"]="${BASH_REMATCH[1]}"
       fi
     fi
   done < <(iw dev "$iface" station dump 2>/dev/null || true)
 
-  declare -A ip_map host_map
+  if [[ ${#macs[@]} -eq 0 ]]; then
+    echo "$clients_json"
+    return
+  fi
 
-  # First pass: map IPv4 specifically from arp / ip -4 neigh
+  local -A ip_map=()
+  local -A name_map=()
+
+  # Map IPv4 from arp / ip neigh
   while IFS= read -r line; do
-    local ip=$(echo "$line" | awk '{print $1}')
-    local mac=$(echo "$line" | awk '{for(i=1;i<=NF;i++) if($i=="lladdr") print $(i+1)}')
-    if [[ -n "$mac" && -n "$ip" ]]; then
+    local ip mac
+    ip=$(echo "$line" | awk '{print $1}')
+    mac=$(echo "$line" | awk '{print $5}')
+    if [[ -n "$mac" && -n "$ip" && "$mac" =~ ^[0-9a-fA-F:]{17}$ ]]; then
       ip_map["$mac"]="$ip"
     fi
-  done < <(ip -4 neigh show dev "$iface" 2>/dev/null | grep -E "10\.42\.0\." || true)
+  done < <(ip -4 neigh show dev "$iface" 2>/dev/null || true)
 
   # Fallback pass for any remaining
-  while IFS= read -r line; do
-    local ip=$(echo "$line" | awk '{print $1}')
-    local mac=$(echo "$line" | awk '{for(i=1;i<=NF;i++) if($i=="lladdr") print $(i+1)}')
-    if [[ -n "$mac" && -n "$ip" && -z "${ip_map[$mac]:-}" ]]; then
-      ip_map["$mac"]="$ip"
-    fi
-  done < <(ip neigh show dev "$iface" 2>/dev/null || true)
+  if [[ -r /proc/net/arp ]]; then
+    while IFS= read -r line; do
+      local ip mac dev
+      ip=$(echo "$line" | awk '{print $1}')
+      mac=$(echo "$line" | awk '{print $4}')
+      dev=$(echo "$line" | awk '{print $6}')
+      if [[ "$dev" == "$iface" && -n "$mac" && -n "$ip" && "$mac" =~ ^[0-9a-fA-F:]{17}$ ]]; then
+        [[ -z "${ip_map[$mac]:-}" ]] && ip_map["$mac"]="$ip"
+      fi
+    done < <(tail -n +2 /proc/net/arp 2>/dev/null || true)
+  fi
 
-  local items=()
-  for mac in "${!st_signal[@]}"; do
-    local ip="${ip_map[$mac]:-unknown}"
-    local hostname=""
-    if [[ "$ip" != "unknown" ]]; then
-      hostname=$(getent hosts "$ip" 2>/dev/null | awk '{print $2}' || true)
-      if [[ -z "$hostname" ]]; then
-        hostname=$(avahi-resolve -a "$ip" 2>/dev/null | awk '{print $2}' || true)
+  # Resolve hostnames
+  for mac in "${macs[@]}"; do
+    local ip="${ip_map[$mac]:-}"
+    local name=""
+    if [[ -n "$ip" ]]; then
+      name=$(getent hosts "$ip" 2>/dev/null | awk '{print $2}' || true)
+      if [[ -z "$name" && -r /var/lib/NetworkManager/dnsmasq-${iface}.leases ]]; then
+        name=$(awk -v m="$mac" '$2 == tolower(m) {print $4}' "/var/lib/NetworkManager/dnsmasq-${iface}.leases" 2>/dev/null || true)
       fi
     fi
-    [[ -z "$hostname" ]] && hostname="$mac"
+    name_map["$mac"]="${name:-Dispositivo}"
+  done
 
-    local sig="${st_signal[$mac]:--60}"
-    local rx="${st_rx[$mac]:-0}"
-    local tx="${st_tx[$mac]:-0}"
-    local time="${st_time[$mac]:-0}"
+  # Build JSON output
+  local out="["
+  local count=0
+  for mac in "${macs[@]}"; do
+    local ip="${ip_map[$mac]:-Desconocida}"
+    local name="${name_map[$mac]:-Dispositivo}"
+    local sig="${signal_map[$mac]:--65}"
+    local rx="${rx_map[$mac]:-0}"
+    local tx="${tx_map[$mac]:-0}"
+    local t="${time_map[$mac]:-0}"
 
-    items+=("$(jq -n \
+    (( count > 0 )) && out+=","
+    out+=$(jq -n \
       --arg mac "$mac" \
       --arg ip "$ip" \
-      --arg hostname "$hostname" \
+      --arg name "$name" \
       --argjson signal "$sig" \
       --argjson rx_bytes "$rx" \
       --argjson tx_bytes "$tx" \
-      --argjson connected_seconds "$time" \
-      '{mac: $mac, ip: $ip, hostname: $hostname, signal: $signal, rx_bytes: $rx_bytes, tx_bytes: $tx_bytes, connected_seconds: $connected_seconds}')")
+      --argjson connected_seconds "$t" \
+      '{
+        mac: $mac,
+        ip: $ip,
+        hostname: $name,
+        signal: $signal,
+        rx_bytes: $rx_bytes,
+        tx_bytes: $tx_bytes,
+        connected_seconds: $connected_seconds
+      }')
+    (( count++ ))
   done
+  out+="]"
 
-  if [[ ${#items[@]} -gt 0 ]]; then
-    clients_json=$(IFS=,; echo "[${items[*]}]")
-  fi
-
-  echo "$clients_json"
+  echo "$out"
 }
 
-# Status command
+# Output complete JSON status
 cmd_status() {
+  local active=false
   local ap_iface
   ap_iface=$(get_ap_iface)
-  
-  local active=false
-  local ip=""
-  local clients="[]"
-  local clients_count=0
-  local actual_ssid=""
-  local actual_band=""
-  local actual_channel=""
-
-  # Upstream info
-  IFS='|' read -r up_iface up_type up_ip up_name up_pref up_list <<< "$(get_upstream_info)"
-
-  # Saved / Configured values
-  local default_ssid="Omarchy-$(hostname 2>/dev/null || echo 'Hotspot')"
-  local conf_ssid
-  conf_ssid=$(get_config "ssid" "$default_ssid")
-  local conf_pw
-  conf_pw=$(get_config "password" "omarchy1234")
-  local conf_band
-  conf_band=$(get_config "band" "bg")
-  local conf_chan
-  conf_chan=$(get_config "channel" "0")
-  local conf_sec
-  conf_sec=$(get_config "security" "wpa-psk")
-  local conf_up_pref
-  conf_up_pref=$(get_config "upstream_preference" "auto")
+  local client_count=0
+  local clients_json="[]"
+  local ip_addr="10.42.0.1"
 
   if is_hotspot_active; then
     active=true
-    ip=$(ip -4 addr show dev "$ap_iface" 2>/dev/null | awk '$1 == "inet" { split($2, a, "/"); print a[1]; exit }')
-    
-    mapfile -t fields < <(nmcli --show-secrets --escape no --get-values \
-      802-11-wireless.ssid,802-11-wireless-security.psk,802-11-wireless.band,802-11-wireless.channel \
-      connection show id "$PROFILE_NAME" 2>/dev/null || true)
+    local actual_ip
+    actual_ip=$(ip -4 addr show dev "$ap_iface" 2>/dev/null | awk '$1 == "inet" { split($2, a, "/"); print a[1]; exit }')
+    [[ -n "$actual_ip" ]] && ip_addr="$actual_ip"
 
-    actual_ssid="${fields[0]:-$conf_ssid}"
-    if [[ -n "${fields[1]:-}" ]]; then
-      conf_pw="${fields[1]}"
-    fi
-    actual_band="${fields[2]:-$conf_band}"
-    actual_channel="${fields[3]:-$conf_chan}"
-
-    clients=$(get_clients "$ap_iface")
-    clients_count=$(echo "$clients" | jq 'length' 2>/dev/null || echo 0)
+    clients_json=$(get_clients "$ap_iface")
+    client_count=$(echo "$clients_json" | jq '. | length' 2>/dev/null || echo "0")
   fi
 
-  local qr_info
-  qr_info=$(generate_qr_matrix "${actual_ssid:-$conf_ssid}" "$conf_pw" "$conf_sec")
+  local conf_ssid conf_pw conf_band conf_channel conf_sec conf_upstream
+  conf_ssid=$(get_config "ssid" "Omarchy-Hotspot")
+  conf_pw=$(get_config "password" "omarchy1234")
+  conf_band=$(get_config "band" "bg")
+  conf_channel=$(get_config "channel" "0")
+  conf_sec=$(get_config "security" "wpa-psk")
+  conf_upstream=$(get_config "upstream_preference" "auto")
+
+  local upstream_json
+  upstream_json=$(get_upstream_info)
+
+  local dynamic_upstreams_json
+  dynamic_upstreams_json=$(get_dynamic_upstreams_json)
+
+  local qr_json
+  qr_json=$(generate_qr_matrix "$conf_ssid" "$conf_pw" "$conf_sec")
 
   jq -n \
     --argjson active "$active" \
-    --arg ssid "${actual_ssid:-$conf_ssid}" \
+    --arg ssid "$conf_ssid" \
     --arg password "$conf_pw" \
-    --arg band "${actual_band:-$conf_band}" \
-    --arg channel "${actual_channel:-$conf_chan}" \
+    --arg band "$conf_band" \
+    --arg channel "$conf_channel" \
     --arg security "$conf_sec" \
-    --arg upstream_preference "$conf_up_pref" \
-    --arg interface "$ap_iface" \
-    --arg ip "${ip:-10.42.0.1}" \
-    --arg upstream_iface "$up_iface" \
-    --arg upstream_type "$up_type" \
-    --arg upstream_ip "$up_ip" \
-    --arg upstream_name "$up_name" \
-    --argjson upstreams "$up_list" \
-    --argjson clients_count "$clients_count" \
-    --argjson clients "$clients" \
-    --argjson qr "$qr_info" \
+    --arg upstream_pref "$conf_upstream" \
+    --arg iface "$ap_iface" \
+    --arg ip "$ip_addr" \
+    --argjson upstream "$upstream_json" \
+    --argjson upstreams "$dynamic_upstreams_json" \
+    --argjson clients_count "$client_count" \
+    --argjson clients "$clients_json" \
+    --argjson qr "$qr_json" \
     '{
       active: $active,
       ssid: $ssid,
@@ -400,15 +483,10 @@ cmd_status() {
       band: $band,
       channel: $channel,
       security: $security,
-      upstream_preference: $upstream_preference,
-      interface: $interface,
+      upstream_preference: $upstream_pref,
+      interface: $iface,
       ip: $ip,
-      upstream: {
-        interface: $upstream_iface,
-        type: $upstream_type,
-        ip: $upstream_ip,
-        name: $upstream_name
-      },
+      upstream: $upstream,
       upstreams: $upstreams,
       clients_count: $clients_count,
       clients: $clients,
@@ -419,11 +497,17 @@ cmd_status() {
 # Start Hotspot
 cmd_start() {
   local ssid="${1:-}"
-  local password="${2:-}"
-  local band="${3:-}"
-  local channel="${4:-}"
-  local security="${5:-}"
-  local upstream_pref="${6:-}"
+  local band="${2:-}"
+  local channel="${3:-}"
+  local security="${4:-}"
+  local upstream_pref="${5:-}"
+
+  # Read PSK from stdin if piped/provided, or fallback to saved config
+  local password=""
+  if [[ ! -t 0 ]]; then
+    IFS= read -r input_pwd || true
+    password="$input_pwd"
+  fi
 
   [[ -z "$ssid" ]] && ssid=$(get_config "ssid" "Omarchy-Hotspot")
   [[ -z "$password" ]] && password=$(get_config "password" "omarchy1234")
@@ -434,7 +518,7 @@ cmd_start() {
 
   save_config "$ssid" "$password" "$band" "$channel" "$security" "$upstream_pref"
 
-  # Ensure Wi-Fi radio is unblocked and powered on so the AP interface can transmit
+  # Ensure Wi-Fi radio is unblocked and powered on
   if rfkill list wifi 2>/dev/null | grep -q "Soft blocked: yes"; then
     rfkill unblock wifi >/dev/null 2>&1 || true
     sleep 0.5
@@ -446,8 +530,6 @@ cmd_start() {
 
   local primary_wifi
   primary_wifi=$(get_primary_wifi)
-  local ap_iface
-  ap_iface=$(get_ap_iface)
 
   # Check if primary wifi is currently connected to an upstream network
   local sta_channel=""
@@ -458,7 +540,6 @@ cmd_start() {
     if [[ -n "$sta_channel" && "$sta_channel" =~ ^[0-9]+$ ]]; then
       if (( sta_channel > 14 )); then
         sta_band="a"
-        # Check if sta_channel is in DFS radar range (52-144) where AP cannot transmit without radar scan
         if (( sta_channel >= 52 && sta_channel <= 144 )); then
           is_dfs=true
         fi
@@ -472,8 +553,6 @@ cmd_start() {
   local target_band="$band"
   if [[ -n "$sta_channel" ]]; then
     if [[ "$is_dfs" == "true" ]]; then
-      # Kernel / hardware cannot run AP on radar DFS channel while in simultaneous client mode.
-      # Fallback to standard 2.4GHz band / channel 6
       target_channel="6"
       target_band="bg"
     else
@@ -482,12 +561,8 @@ cmd_start() {
     fi
   fi
 
-  # Dynamically ensure virtual AP interface exists on phy0
-  if ! ip link show ap0 >/dev/null 2>&1; then
-    sudo -n iw phy phy0 interface add ap0 type __ap 2>/dev/null || true
-    sudo -n ip link set ap0 up 2>/dev/null || true
-    sleep 0.5
-  fi
+  # Ensure virtual AP interface (ap0) exists on phy0 via root helper
+  ensure_ap0_created
 
   local ap_iface
   if ip link show ap0 >/dev/null 2>&1; then
@@ -501,7 +576,7 @@ cmd_start() {
     nmcli connection delete id "$PROFILE_NAME" >/dev/null 2>&1 || true
   fi
 
-  # Build robust nmcli arguments
+  # Build nmcli arguments without password in argv
   local -a nm_args=(
     type wifi
     ifname "$ap_iface"
@@ -524,21 +599,21 @@ cmd_start() {
       ipv4.method shared
       ipv6.method ignore
     )
+    nmcli connection add "${nm_args[@]}" >/dev/null
   else
-    nm_args=(
-      "${nm_args[@]}"
+    nm_args+=(
       802-11-wireless-security.key-mgmt wpa-psk
       802-11-wireless-security.proto rsn
       802-11-wireless-security.pairwise ccmp
       802-11-wireless-security.group ccmp
       802-11-wireless-security.pmf 1
-      802-11-wireless-security.psk "$password"
       ipv4.method shared
       ipv6.method ignore
     )
+    nmcli connection add "${nm_args[@]}" >/dev/null
+    # Pass password via stdin to nmcli connection edit (never in argv)
+    printf "set 802-11-wireless-security.psk %s\nsave\nquit\n" "$password" | nmcli connection edit "$PROFILE_NAME" >/dev/null 2>&1
   fi
-
-  nmcli connection add "${nm_args[@]}" >/dev/null
 
   # Bring connection up on ap0
   nmcli connection up id "$PROFILE_NAME" >/dev/null
@@ -554,10 +629,8 @@ cmd_stop() {
   if nmcli connection show id "$PROFILE_NAME" >/dev/null 2>&1; then
     nmcli connection delete id "$PROFILE_NAME" >/dev/null 2>&1 || true
   fi
-  # Cleanly delete virtual interface ap0 when stopping hotspot so it leaves wlo1 alone
-  if ip link show ap0 >/dev/null 2>&1; then
-    sudo -n iw dev ap0 del 2>/dev/null || true
-  fi
+  # Cleanly delete virtual interface ap0 via root helper
+  ensure_ap0_deleted
   cmd_status
 }
 
@@ -573,13 +646,21 @@ cmd_toggle() {
 # Save configuration
 cmd_save() {
   local ssid="${1:-}"
-  local password="${2:-}"
-  local band="${3:-bg}"
-  local channel="${4:-0}"
-  local security="${5:-wpa-psk}"
-  local upstream_pref="${6:-auto}"
+  local band="${2:-bg}"
+  local channel="${3:-0}"
+  local security="${4:-wpa-psk}"
+  local upstream_pref="${5:-auto}"
+
+  # Read PSK from stdin if piped/provided, or fallback to saved config
+  local password=""
+  if [[ ! -t 0 ]]; then
+    IFS= read -r input_pwd || true
+    password="$input_pwd"
+  fi
 
   [[ -n "$ssid" ]] || { echo '{"error": "SSID is required"}' >&2; exit 1; }
+  [[ -z "$password" ]] && password=$(get_config "password" "omarchy1234")
+
   save_config "$ssid" "$password" "$band" "$channel" "$security" "$upstream_pref"
   cmd_status
 }

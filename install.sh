@@ -31,37 +31,56 @@ else
   echo "[✓] Todas las dependencias están instaladas (${DEPS[*]})"
 fi
 
-# 2. Configurar regla de sudoers para AP virtual en modo repetidor (sin contraseña)
-SUDOERS_FILE="/etc/sudoers.d/omarchy-hotspot-ap"
-RULE="$REAL_USER ALL=(ALL) NOPASSWD: /usr/bin/iw phy * interface add ap0 type __ap, /usr/bin/iw dev ap0 del, /usr/bin/ip link set ap0 *"
+# 2. Instalar root wrapper exacto para AP virtual en /usr/local/bin
+ROOT_HELPER_SRC="$SCRIPT_DIR/bin/omarchy-hotspot-ap-helper"
+ROOT_HELPER_DEST="/usr/local/bin/omarchy-hotspot-ap-helper"
 
-if [[ ! -f "$SUDOERS_FILE" ]] || ! sudo grep -q "interface add ap0 type __ap" "$SUDOERS_FILE" 2>/dev/null; then
-  echo "[*] Configurando permisos sudo para AP virtual en modo repetidor..."
-  echo "$RULE" | sudo tee "$SUDOERS_FILE" >/dev/null
-  sudo chmod 0440 "$SUDOERS_FILE"
-  echo "[✓] Regla sudoers creada en $SUDOERS_FILE"
-else
-  echo "[✓] Regla sudoers ya configurada"
+if [[ -f "$ROOT_HELPER_SRC" ]]; then
+  echo "[*] Instalando root helper en $ROOT_HELPER_DEST..."
+  sudo cp "$ROOT_HELPER_SRC" "$ROOT_HELPER_DEST"
+  sudo chown root:root "$ROOT_HELPER_DEST"
+  sudo chmod 0755 "$ROOT_HELPER_DEST"
+  echo "[✓] Root helper instalado con permisos 0755 root:root"
 fi
 
-# 3. Instalar CLI helper en ~/.local/bin
+# 3. Configurar regla de sudoers estricta sin comodines de argumentos
+SUDOERS_FILE="/etc/sudoers.d/omarchy-hotspot-ap"
+RULE="$REAL_USER ALL=(ALL) NOPASSWD: $ROOT_HELPER_DEST add, $ROOT_HELPER_DEST del, $ROOT_HELPER_DEST up, $ROOT_HELPER_DEST down"
+
+echo "[*] Configurando regla sudoers estricta en $SUDOERS_FILE..."
+echo "$RULE" | sudo tee "$SUDOERS_FILE" >/dev/null
+sudo chmod 0440 "$SUDOERS_FILE"
+echo "[✓] Regla sudoers configurada sin comodines"
+
+# 4. Reparar y asegurar permisos 0600 en archivo de configuración si existe
+CONFIG_DIR="$REAL_HOME/.config/omarchy"
+mkdir -p "$CONFIG_DIR"
+chmod 0700 "$CONFIG_DIR" 2>/dev/null || true
+if [[ -f "$CONFIG_DIR/hotspot.json" ]]; then
+  chmod 0600 "$CONFIG_DIR/hotspot.json" 2>/dev/null || true
+  chown "$REAL_USER":"$REAL_USER" "$CONFIG_DIR/hotspot.json" 2>/dev/null || true
+fi
+
+# 5. Instalar CLI helper en ~/.local/bin
 mkdir -p "$BIN_DIR"
 cp "$SCRIPT_DIR/bin/omarchy-hotspot" "$BIN_DIR/omarchy-hotspot"
 chmod +x "$BIN_DIR/omarchy-hotspot"
 chown "$REAL_USER":"$REAL_USER" "$BIN_DIR/omarchy-hotspot" 2>/dev/null || true
 echo "[✓] Helper instalado en $BIN_DIR/omarchy-hotspot"
 
-# 4. Instalar Plugin en ~/.config/omarchy/plugins/evcode.hotspot
+# 6. Instalar Plugin en ~/.config/omarchy/plugins/evcode.hotspot
 mkdir -p "$TARGET_DIR/bin"
 cp "$SCRIPT_DIR/manifest.json" "$TARGET_DIR/"
 cp "$SCRIPT_DIR/Panel.qml" "$TARGET_DIR/"
 cp "$SCRIPT_DIR/Model.js" "$TARGET_DIR/"
 cp "$SCRIPT_DIR/bin/omarchy-hotspot" "$TARGET_DIR/bin/"
+cp "$SCRIPT_DIR/bin/omarchy-hotspot-ap-helper" "$TARGET_DIR/bin/"
 chmod +x "$TARGET_DIR/bin/omarchy-hotspot"
+chmod +x "$TARGET_DIR/bin/omarchy-hotspot-ap-helper"
 chown -R "$REAL_USER":"$REAL_USER" "$TARGET_DIR" 2>/dev/null || true
 echo "[✓] Plugin instalado en $TARGET_DIR"
 
-# 5. Validar y habilitar plugin en Omarchy
+# 7. Validar y habilitar plugin en Omarchy
 if command -v omarchy >/dev/null 2>&1; then
   omarchy plugin validate "$TARGET_DIR" 2>/dev/null || true
   omarchy plugin enable evcode.hotspot 2>/dev/null || true
@@ -72,7 +91,7 @@ if command -v omarchy-shell >/dev/null 2>&1; then
   omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
 fi
 
-# 6. Limpiar caché QML y reiniciar shell
+# 8. Limpiar caché QML y reiniciar shell
 rm -rf "$REAL_HOME/.cache/quickshell/qmlcache"/* 2>/dev/null || true
 
 if command -v omarchy-restart-shell >/dev/null 2>&1; then

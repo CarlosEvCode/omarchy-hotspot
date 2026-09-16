@@ -100,7 +100,8 @@ Panel {
     desiredActive = true
     statusMsg = "Iniciando Hotspot..."
     statusIsError = false
-    actionProc.command = [root.helperBin, "start", editSsid || root.ssid, editPassword || root.password, editBand || root.band, "0", editSecurity || root.security, editUpstreamPref || root.upstreamPreference]
+    actionProc.secret = editPassword || root.password
+    actionProc.command = [root.helperBin, "start", editSsid || root.ssid, editBand || root.band, "0", editSecurity || root.security, editUpstreamPref || root.upstreamPreference]
     actionProc.running = true
   }
 
@@ -110,6 +111,7 @@ Panel {
     desiredActive = false
     statusMsg = "Deteniendo Hotspot..."
     statusIsError = false
+    actionProc.secret = ""
     actionProc.command = [root.helperBin, "stop"]
     actionProc.running = true
   }
@@ -120,6 +122,7 @@ Panel {
     busy = true
     statusMsg = "Cambiando fuente a " + (prefId === "ethernet" ? "Ethernet" : (prefId === "wifi" ? "Wi-Fi" : "Automático")) + "..."
     statusIsError = false
+    actionProc.secret = ""
     actionProc.command = [root.helperBin, "set-upstream", prefId]
     actionProc.running = true
   }
@@ -129,10 +132,11 @@ Panel {
     busy = true
     statusMsg = "Aplicando configuración..."
     statusIsError = false
+    actionProc.secret = editPassword || root.password
     if (active) {
-      actionProc.command = [root.helperBin, "start", editSsid || root.ssid, editPassword || root.password, editBand || root.band, "0", editSecurity || root.security, editUpstreamPref || root.upstreamPreference]
+      actionProc.command = [root.helperBin, "start", editSsid || root.ssid, editBand || root.band, "0", editSecurity || root.security, editUpstreamPref || root.upstreamPreference]
     } else {
-      actionProc.command = [root.helperBin, "save", editSsid || root.ssid, editPassword || root.password, editBand || root.band, "0", editSecurity || root.security, editUpstreamPref || root.upstreamPreference]
+      actionProc.command = [root.helperBin, "save", editSsid || root.ssid, editBand || root.band, "0", editSecurity || root.security, editUpstreamPref || root.upstreamPreference]
     }
     actionProc.running = true
   }
@@ -200,6 +204,14 @@ Panel {
   // Action execution process
   Process {
     id: actionProc
+    property string secret: ""
+    stdinEnabled: true
+    onStarted: {
+      if (secret) {
+        write(secret + "\n")
+        secret = ""
+      }
+    }
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
