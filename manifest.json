@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "evcode.hotspot",
+  "name": "Wi-Fi Hotspot & Repeater",
+  "version": "1.0.0",
+  "author": "evcode",
+  "description": "Native Wi-Fi Hotspot & Repeater manager with dynamic upstream selection, QR code pairing, and client monitoring.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Hotspot & Repeater",
+    "description": "Wi-Fi Hotspot & Internet Sharing for Omarchy Shell",
+    "category": "Network",
+    "allowMultiple": false
+  }
+}
