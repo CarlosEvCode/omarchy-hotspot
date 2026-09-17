@@ -505,8 +505,8 @@ cmd_start() {
   # Read PSK from stdin if piped/provided, or fallback to saved config
   local password=""
   if [[ ! -t 0 ]]; then
-    IFS= read -r input_pwd || true
-    password="$input_pwd"
+    IFS= read -r -t 0.2 input_pwd 2>/dev/null || true
+    password="${input_pwd:-}"
   fi
 
   [[ -z "$ssid" ]] && ssid=$(get_config "ssid" "Omarchy-Hotspot")
@@ -654,8 +654,8 @@ cmd_save() {
   # Read PSK from stdin if piped/provided, or fallback to saved config
   local password=""
   if [[ ! -t 0 ]]; then
-    IFS= read -r input_pwd || true
-    password="$input_pwd"
+    IFS= read -r -t 0.2 input_pwd 2>/dev/null || true
+    password="${input_pwd:-}"
   fi
 
   [[ -n "$ssid" ]] || { echo '{"error": "SSID is required"}' >&2; exit 1; }

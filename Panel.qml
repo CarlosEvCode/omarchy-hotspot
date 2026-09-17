@@ -90,6 +90,7 @@ Panel {
     desiredActive = !active
     statusMsg = desiredActive ? "Iniciando Hotspot..." : "Deteniendo Hotspot..."
     statusIsError = false
+    actionProc.secret = editPassword || root.password
     actionProc.command = [root.helperBin, "toggle"]
     actionProc.running = true
   }
