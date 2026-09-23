@@ -3,24 +3,25 @@
 # Installed to /usr/local/bin/omarchy-hotspot-ap-helper (mode 0755 root:root)
 
 set -euo pipefail
+export PATH="/usr/bin:/bin"
 
 case "${1:-}" in
   add)
-    if ! ip link show ap0 >/dev/null 2>&1; then
-      iw phy phy0 interface add ap0 type __ap 2>/dev/null || true
-      ip link set ap0 up 2>/dev/null || true
+    if ! /usr/bin/ip link show ap0 >/dev/null 2>&1; then
+      /usr/bin/iw phy phy0 interface add ap0 type __ap 2>/dev/null || true
+      /usr/bin/ip link set ap0 up 2>/dev/null || true
     fi
     ;;
   del)
-    if ip link show ap0 >/dev/null 2>&1; then
-      iw dev ap0 del 2>/dev/null || true
+    if /usr/bin/ip link show ap0 >/dev/null 2>&1; then
+      /usr/bin/iw dev ap0 del 2>/dev/null || true
     fi
     ;;
   up)
-    ip link set ap0 up 2>/dev/null || true
+    /usr/bin/ip link set ap0 up 2>/dev/null || true
     ;;
   down)
-    ip link set ap0 down 2>/dev/null || true
+    /usr/bin/ip link set ap0 down 2>/dev/null || true
     ;;
   *)
     echo "Usage: $0 {add|del|up|down}" >&2
