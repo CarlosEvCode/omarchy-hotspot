@@ -33,7 +33,7 @@ TARGET_DIR="$TARGET_HOME/.config/omarchy/plugins/evcode.hotspot"
 BIN_DIR="$TARGET_HOME/.local/bin"
 
 # 2. Verificar e instalar dependencias del sistema
-DEPS=("networkmanager" "iw" "iproute2" "qrencode")
+DEPS=("networkmanager" "iw" "iproute2" "qrencode" "dnsmasq")
 MISSING=()
 
 for dep in "${DEPS[@]}"; do
@@ -62,10 +62,27 @@ sudo tee "$TMP_HELPER" >/dev/null <<'EOF'
 set -euo pipefail
 export PATH="/usr/bin:/bin"
 
+find_ap_phy() {
+  local p_path p
+  for p_path in /sys/class/ieee80211/*; do
+    p=$(basename "$p_path")
+    if /usr/bin/iw phy "$p" info 2>/dev/null | grep -Eq '^[[:space:]]+\* AP$'; then
+      echo "$p"
+      return 0
+    fi
+  done
+  echo ""
+}
+
 case "${1:-}" in
   add)
     if ! /usr/bin/ip link show ap0 >/dev/null 2>&1; then
-      /usr/bin/iw phy phy0 interface add ap0 type __ap 2>/dev/null || true
+      phy=$(find_ap_phy)
+      if [[ -n "$phy" ]]; then
+        /usr/bin/iw phy "$phy" interface add ap0 type __ap 2>/dev/null || true
+      else
+        /usr/bin/iw phy phy0 interface add ap0 type __ap 2>/dev/null || true
+      fi
       /usr/bin/ip link set ap0 up 2>/dev/null || true
     fi
     ;;
@@ -111,6 +128,34 @@ fi
 sudo chmod 0440 "$TMP_SUDOERS"
 sudo mv -f "$TMP_SUDOERS" "$SUDOERS_FILE"
 echo "[✓] Regla sudoers validada con visudo e instalada atómicamente en $SUDOERS_FILE"
+
+# 4b. Si ufw está activo, permitir DHCP/DNS y reenvío del hotspot.
+# Sin esto, los clientes se autentican pero nunca reciben IP (DHCP bloqueado).
+if command -v ufw >/dev/null 2>&1 && sudo ufw status 2>/dev/null | grep -q "Status: active"; then
+  echo "[*] ufw activo: abriendo DHCP/DNS/reenvío para el hotspot..."
+  AP_IFACE=""
+  for _iface in $(iw dev 2>/dev/null | awk '$1 == "Interface" { print $2 }'); do
+    _wiphy=$(iw dev "$_iface" info 2>/dev/null | awk '$1 == "wiphy" { print $2; exit }')
+    for _p in /sys/class/ieee80211/*; do
+      _b=$(basename "$_p")
+      if [[ "phy$_wiphy" == "$_b" ]] && iw phy "$_b" info 2>/dev/null | grep -Eq '^[[:space:]]+\* AP$'; then
+        AP_IFACE="$_iface"
+        break 2
+      fi
+    done
+  done
+  UP_IFACE=$(iw dev 2>/dev/null | awk '$1 == "Interface" && $2 ~ /^wl/ { print $2; exit }')
+  if [[ -n "$AP_IFACE" ]]; then
+    sudo ufw allow in on "$AP_IFACE" to any port 67 proto udp comment 'omarchy hotspot DHCP' 2>/dev/null || true
+    sudo ufw allow in on "$AP_IFACE" to any port 53 comment 'omarchy hotspot DNS' 2>/dev/null || true
+    if [[ -n "$UP_IFACE" && "$UP_IFACE" != "$AP_IFACE" ]]; then
+      sudo ufw route allow in on "$AP_IFACE" out on "$UP_IFACE" comment 'omarchy hotspot forwarding' 2>/dev/null || true
+    fi
+    echo "[✓] Reglas ufw del hotspot aplicadas sobre $AP_IFACE"
+  else
+    echo "[!] No se encontró interfaz con modo AP; omitiendo reglas ufw (ver README)" >&2
+  fi
+fi
 
 # 5. Asegurar permisos 0600 en directorio y archivo de configuración
 CONFIG_DIR="$TARGET_HOME/.config/omarchy"
