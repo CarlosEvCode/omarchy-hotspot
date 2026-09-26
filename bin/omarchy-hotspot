@@ -84,14 +84,56 @@ get_primary_wifi() {
   echo "${iface:-wlo1}"
 }
 
+# Find first phy supporting AP mode (e.g. phy1, phy3). Empty if none.
+get_ap_phy() {
+  local phy_path phy
+  for phy_path in /sys/class/ieee80211/*; do
+    phy=$(basename "$phy_path")
+    if iw phy "$phy" info 2>/dev/null | grep -Eq '^[[:space:]]+\* AP$'; then
+      echo "$phy"
+      return 0
+    fi
+  done
+  echo ""
+}
+
+# Find wifi interface residing on an AP-capable phy. Falls back to primary.
+get_ap_wifi_iface() {
+  local ap_phy idx iface wiphy
+  ap_phy=$(get_ap_phy)
+  if [[ -n "$ap_phy" ]]; then
+    idx="${ap_phy#phy}"
+    for iface in $(iw dev 2>/dev/null | awk '$1 == "Interface" { print $2 }'); do
+      wiphy=$(iw dev "$iface" info 2>/dev/null | awk '$1 == "wiphy" { print $2; exit }')
+      if [[ "$wiphy" == "$idx" ]]; then
+        echo "$iface"
+        return 0
+      fi
+    done
+  fi
+  get_primary_wifi
+}
+
+# True when a virtual ap0 exists AND NetworkManager can actually use it.
+# Externally-created ap0 (iw phy ... add ap0 type __ap) is rejected by
+# wpa_supplicant on some drivers (NM log: "couldn't grab this interface"),
+# leaving ap0 permanently 'unavailable'/'unmanaged'. In that case the real
+# AP-capable interface must be used and NM/wpa_supplicant left to own AP setup.
+ap0_usable() {
+  local st
+  ip link show ap0 >/dev/null 2>&1 || return 1
+  st=$(nmcli -t -f DEVICE,STATE device status 2>/dev/null | awk -F: '$1 == "ap0" { print $2; exit }')
+  [[ -n "$st" && "$st" != "unavailable" && "$st" != "unmanaged" ]]
+}
+
 # Find or ensure AP interface name
 get_ap_iface() {
-  if ip link show ap0 >/dev/null 2>&1; then
+  if ap0_usable; then
     echo "ap0"
     return
   fi
   local p
-  p=$(get_primary_wifi)
+  p=$(get_ap_wifi_iface)
   echo "${p:-wlo1}"
 }
 
@@ -103,7 +145,13 @@ ensure_ap0_created() {
   if [[ -x "$AP_HELPER" ]]; then
     sudo -n "$AP_HELPER" add 2>/dev/null || true
   else
-    sudo -n iw phy phy0 interface add ap0 type __ap 2>/dev/null || true
+    local ap_phy
+    ap_phy=$(get_ap_phy)
+    if [[ -n "$ap_phy" ]]; then
+      sudo -n iw phy "$ap_phy" interface add ap0 type __ap 2>/dev/null || true
+    else
+      sudo -n iw phy phy0 interface add ap0 type __ap 2>/dev/null || true
+    fi
     sudo -n ip link set ap0 up 2>/dev/null || true
   fi
   sleep 0.5
@@ -561,14 +609,17 @@ cmd_start() {
     fi
   fi
 
-  # Ensure virtual AP interface (ap0) exists on phy0 via root helper
+  # Use virtual ap0 only where the driver/NM stack accepts it (true STA+AP
+  # repeater). Otherwise drop the stale ap0 and use the real AP-capable
+  # interface, letting NM/wpa_supplicant own AP setup.
   ensure_ap0_created
 
   local ap_iface
-  if ip link show ap0 >/dev/null 2>&1; then
+  if ap0_usable; then
     ap_iface="ap0"
   else
-    ap_iface=$(get_primary_wifi)
+    ensure_ap0_deleted 2>/dev/null || true
+    ap_iface=$(get_ap_wifi_iface)
   fi
 
   # Remove existing profile if any

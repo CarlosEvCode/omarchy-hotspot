@@ -33,8 +33,19 @@ A native status bar widget and control center for the [Omarchy](https://omarchy.
 The plugin requires standard Linux networking utilities available in official Arch Linux repositories:
 
 ```bash
-sudo pacman -S --needed networkmanager iw iproute2 qrencode
+sudo pacman -S --needed networkmanager iw iproute2 qrencode dnsmasq
 ```
+
+> `dnsmasq` is required: NetworkManager's `ipv4.method shared` fails without it
+> (`could not start dnsmasq`, hotspot activates then immediately drops).
+> If `ufw` is active, allow the hotspot through or clients will authenticate
+> but never receive an IP:
+>
+> ```bash
+> sudo ufw allow in on <AP-IFACE> to any port 67 proto udp
+> sudo ufw allow in on <AP-IFACE> to any port 53
+> sudo ufw route allow in on <AP-IFACE> out on <UPSTREAM-IFACE>
+> ```
 
 ---
 
@@ -46,6 +57,9 @@ sudo pacman -S --needed networkmanager iw iproute2 qrencode
 omarchy plugin add https://github.com/CarlosEvCode/omarchy-hotspot.git --enable
 omarchy restart shell
 ```
+
+> NOTE: `plugin add` only clones and enables the widget. Run `./install.sh`
+> afterwards for the root helper, sudoers rule, CLI, dependencies and firewall rules.
 
 ### Manual / Local Installation
 
