@@ -11,6 +11,17 @@ CONFIG_FILE="$CONFIG_DIR/hotspot.json"
 PROFILE_NAME="OmarchyHotspot"
 AP_HELPER="/usr/local/bin/omarchy-hotspot-ap-helper"
 
+# Language from system locale (default: English)
+HS_LANG="$(printf '%s' "${LC_ALL:-${LC_MESSAGES:-${LANG:-en}}}" | cut -d. -f1 | cut -d_ -f1 | tr '[:upper:]' '[:lower:]')"
+[[ "$HS_LANG" == "es" ]] || HS_LANG="en"
+
+tr_str() {
+  case "$1" in
+    auto_recommended) [[ "$HS_LANG" == "es" ]] && echo "Automático (Recomendado)" || echo "Automatic (Recommended)" ;;
+    device)          [[ "$HS_LANG" == "es" ]] && echo "Dispositivo" || echo "Device" ;;
+  esac
+}
+
 # Ensure config directory exists with strict permissions
 mkdir -p "$CONFIG_DIR"
 chmod 0700 "$CONFIG_DIR" 2>/dev/null || true
@@ -255,7 +266,7 @@ get_dynamic_upstreams_json() {
   pref=$(get_config "upstream_preference" "auto")
   
   # Always include Auto
-  local items='[{"id":"auto","label":"Automático (Recomendado)","available":true,"selected":'$( [[ "$pref" == "auto" ]] && echo "true" || echo "false" )'}'
+  local items='[{"id":"auto","label":"'"$(tr_str auto_recommended)"'","available":true,"selected":'$( [[ "$pref" == "auto" ]] && echo "true" || echo "false" )'}'
 
   # Ethernet check
   local eth_iface
@@ -434,15 +445,15 @@ get_clients() {
         name=$(awk -v m="$mac" '$2 == tolower(m) {print $4}' "/var/lib/NetworkManager/dnsmasq-${iface}.leases" 2>/dev/null || true)
       fi
     fi
-    name_map["$mac"]="${name:-Dispositivo}"
+    name_map["$mac"]="${name:-$(tr_str device)}"
   done
 
   # Build JSON output
   local out="["
   local count=0
   for mac in "${macs[@]}"; do
-    local ip="${ip_map[$mac]:-Desconocida}"
-    local name="${name_map[$mac]:-Dispositivo}"
+    local ip="${ip_map[$mac]:-unknown}"
+    local name="${name_map[$mac]:-$(tr_str device)}"
     local sig="${signal_map[$mac]:--65}"
     local rx="${rx_map[$mac]:-0}"
     local tx="${tx_map[$mac]:-0}"

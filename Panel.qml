@@ -45,7 +45,7 @@ Panel {
   readonly property var upstream: statusData && statusData.upstream ? statusData.upstream : ({})
   readonly property int clientsCount: statusData && statusData.clients_count ? Number(statusData.clients_count) : 0
   readonly property var clientsList: statusData && statusData.clients ? statusData.clients : []
-  readonly property var upstreamsList: statusData && statusData.upstreams && statusData.upstreams.length > 0 ? statusData.upstreams : [{ id: "auto", label: "Automático (Recomendado)", available: true }]
+  readonly property var upstreamsList: statusData && statusData.upstreams && statusData.upstreams.length > 0 ? statusData.upstreams : [{ id: "auto", label: Model.tr("autoRecommended"), available: true }]
   readonly property var qrData: statusData && statusData.qr ? statusData.qr : ({ size: 0, rows: [] })
 
   // UI state
@@ -73,7 +73,7 @@ Panel {
   function copyToClipboard(text) {
     if (!text) return
     Quickshell.execDetached(["wl-copy", String(text)])
-    statusMsg = "¡Copiado al portapapeles!"
+    statusMsg = Model.tr("copied")
     statusIsError = false
     msgTimer.restart()
   }
@@ -88,7 +88,7 @@ Panel {
     if (busy) return
     busy = true
     desiredActive = !active
-    statusMsg = desiredActive ? "Iniciando Hotspot..." : "Deteniendo Hotspot..."
+    statusMsg = Model.tr(desiredActive ? "starting" : "stopping")
     statusIsError = false
     actionProc.secret = editPassword || root.password
     actionProc.command = [root.helperBin, "toggle"]
@@ -99,7 +99,7 @@ Panel {
     if (busy) return
     busy = true
     desiredActive = true
-    statusMsg = "Iniciando Hotspot..."
+    statusMsg = Model.tr("starting")
     statusIsError = false
     actionProc.secret = editPassword || root.password
     actionProc.command = [root.helperBin, "start", editSsid || root.ssid, editBand || root.band, "0", editSecurity || root.security, editUpstreamPref || root.upstreamPreference]
@@ -110,7 +110,7 @@ Panel {
     if (busy) return
     busy = true
     desiredActive = false
-    statusMsg = "Deteniendo Hotspot..."
+    statusMsg = Model.tr("stopping")
     statusIsError = false
     actionProc.secret = ""
     actionProc.command = [root.helperBin, "stop"]
@@ -121,7 +121,7 @@ Panel {
     if (busy) return
     editUpstreamPref = prefId
     busy = true
-    statusMsg = "Cambiando fuente a " + (prefId === "ethernet" ? "Ethernet" : (prefId === "wifi" ? "Wi-Fi" : "Automático")) + "..."
+    statusMsg = Model.tr("switchingSource", prefId === "ethernet" ? "Ethernet" : (prefId === "wifi" ? "Wi-Fi" : Model.tr("automatic")))
     statusIsError = false
     actionProc.secret = ""
     actionProc.command = [root.helperBin, "set-upstream", prefId]
@@ -131,7 +131,7 @@ Panel {
   function applySettings() {
     if (busy) return
     busy = true
-    statusMsg = "Aplicando configuración..."
+    statusMsg = Model.tr("applyingSettings")
     statusIsError = false
     actionProc.secret = editPassword || root.password
     if (active) {
@@ -229,10 +229,10 @@ Panel {
     onExited: function(exitCode, exitStatus) {
       root.busy = false
       if (exitCode === 0) {
-        root.statusMsg = root.active ? "Hotspot activo" : "Hotspot detenido"
+        root.statusMsg = Model.tr(root.active ? "hotspotActive" : "hotspotStopped")
         root.statusIsError = false
       } else {
-        root.statusMsg = "Error al ejecutar la acción"
+        root.statusMsg = Model.tr("actionError")
         root.statusIsError = true
       }
       msgTimer.restart()
@@ -259,9 +259,9 @@ Panel {
     active: root.active
     tooltipText: {
       if (root.active) {
-        return "Hotspot: " + root.ssid + (root.clientsCount > 0 ? " (" + root.clientsCount + " conectados)" : "")
+        return "Hotspot: " + root.ssid + (root.clientsCount > 0 ? " (" + Model.tr("clientsConnected", root.clientsCount) + ")" : "")
       }
-      return "Hotspot: Inactivo"
+      return Model.tr("hotspotInactiveTooltip")
     }
     onPressed: function(b) {
       if (b === Qt.RightButton) root.toggleHotspot()
@@ -323,7 +323,7 @@ Panel {
 
             PanelToolTip {
               visible: powerSwitch.containsMouse
-              text: root.active ? "Desactivar Hotspot" : "Activar Hotspot"
+              text: Model.tr(root.active ? "disableHotspot" : "enableHotspot")
               fontFamily: root.bar.fontFamily
             }
           }
@@ -338,7 +338,7 @@ Panel {
             spacing: Style.space(2)
 
             Text {
-              text: "Zona Wi-Fi / Hotspot"
+              text: Model.tr("title")
               color: root.bar.foreground
               font.family: root.bar.fontFamily
               font.pixelSize: Style.font.title
@@ -352,7 +352,7 @@ Panel {
                 if (root.active) {
                   return root.ssid + " · " + root.ipAddress
                 }
-                return "Inactivo (Haz clic para compartir internet)"
+                return Model.tr("inactiveShare")
               }
               color: root.active ? root.bar.foreground : Qt.darker(root.bar.foreground, 1.4)
               opacity: root.active ? 0.9 : 0.6
@@ -372,7 +372,7 @@ Panel {
           spacing: Style.space(6)
 
           Text {
-            text: "Compartir internet desde:"
+            text: Model.tr("shareFrom")
             color: root.bar.foreground
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.bodySmall
@@ -395,9 +395,9 @@ Panel {
                   return "󰛳 Auto"
                 }
                 tooltipText: {
-                  if (modelData.id === "ethernet") return "Compartir exclusivamente desde cable Ethernet"
-                  if (modelData.id === "wifi") return "Compartir desde conexión Wi-Fi (Modo repetidor)"
-                  return "Automático (Usa la red principal con salida a internet)"
+                  if (modelData.id === "ethernet") return Model.tr("tipEthernet")
+                  if (modelData.id === "wifi") return Model.tr("tipWifi")
+                  return Model.tr("tipAuto")
                 }
                 fontFamily: root.bar.fontFamily
                 fontSize: Style.font.bodySmall
@@ -439,9 +439,9 @@ Panel {
               Text {
                 Layout.fillWidth: true
                 text: {
-                  var t = root.upstream.type === "ethernet" ? "Ethernet" : (root.upstream.type === "wifi" ? "Wi-Fi (" + (root.upstream.name || "Cliente") + ")" : "Red")
+                  var t = root.upstream.type === "ethernet" ? "Ethernet" : (root.upstream.type === "wifi" ? "Wi-Fi (" + (root.upstream.name || Model.tr("client")) + ")" : Model.tr("network"))
                   var ip = root.upstream.ip ? " · " + root.upstream.ip : ""
-                  return "Fuente activa: " + t + ip
+                  return Model.tr("activeSource") + t + ip
                 }
                 color: root.bar.foreground
                 font.family: root.bar.fontFamily
@@ -480,7 +480,7 @@ Panel {
 
           Button {
             Layout.fillWidth: true
-            text: (root.qrViewOpen ? "󰅁 Ocultar QR" : "󰤨 Ver QR")
+            text: Model.tr(root.qrViewOpen ? "hideQr" : "showQr")
             fontFamily: root.bar.fontFamily
             fontSize: Style.font.bodySmall
             bordered: true
@@ -493,7 +493,7 @@ Panel {
 
           Button {
             Layout.fillWidth: true
-            text: (root.settingsOpen ? "󰅁 Cerrar Ajustes" : "󰒓 Configuración")
+            text: Model.tr(root.settingsOpen ? "closeSettings" : "settings")
             fontFamily: root.bar.fontFamily
             fontSize: Style.font.bodySmall
             bordered: true
@@ -509,7 +509,7 @@ Panel {
 
           PanelActionButton {
             iconText: "󰑐"
-            tooltipText: "Actualizar estado"
+            tooltipText: Model.tr("refreshStatus")
             fontFamily: root.bar.fontFamily
             onClicked: root.refreshStatus()
           }
@@ -539,7 +539,7 @@ Panel {
               spacing: Style.space(10)
 
               Text {
-                text: "Conectar Dispositivos"
+                text: Model.tr("connectDevices")
                 color: root.bar.foreground
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.title
@@ -549,7 +549,7 @@ Panel {
               }
 
               Text {
-                text: "Escanea el código QR con la cámara de tu móvil para conectarte:"
+                text: Model.tr("scanQr")
                 color: root.bar.foreground
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.bodySmall
@@ -612,7 +612,7 @@ Panel {
                 }
 
                 Button {
-                  text: "Copiar Red"
+                  text: Model.tr("copySsid")
                   fontFamily: root.bar.fontFamily
                   fontSize: Style.font.bodySmall
                   bordered: true
@@ -626,7 +626,7 @@ Panel {
                 visible: root.password !== ""
 
                 Text {
-                  text: "Contraseña: " + (root.showPassword ? root.password : "••••••••")
+                  text: Model.tr("passwordLabel") + (root.showPassword ? root.password : "••••••••")
                   color: root.bar.foreground
                   font.family: root.bar.fontFamily
                   font.pixelSize: Style.font.bodySmall
@@ -642,7 +642,7 @@ Panel {
                 }
 
                 Button {
-                  text: "Copiar Clave"
+                  text: Model.tr("copyPassword")
                   fontFamily: root.bar.fontFamily
                   fontSize: Style.font.bodySmall
                   bordered: true
@@ -677,7 +677,7 @@ Panel {
               spacing: Style.space(8)
 
               Text {
-                text: "Configuración de Red"
+                text: Model.tr("networkSettings")
                 color: root.bar.foreground
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.title
@@ -686,7 +686,7 @@ Panel {
 
               // SSID Input
               Text {
-                text: "Nombre de la Red (SSID):"
+                text: Model.tr("ssidLabel")
                 color: root.bar.foreground
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.bodySmall
@@ -697,13 +697,13 @@ Panel {
                 id: ssidInput
                 width: parent.width
                 text: root.editSsid
-                placeholderText: "Ej. MiHotspot"
+                placeholderText: Model.tr("ssidPlaceholder")
                 onTextChanged: root.editSsid = text
               }
 
               // Password Input
               Text {
-                text: "Contraseña (mínimo 8 caracteres):"
+                text: Model.tr("passwordMin")
                 color: root.bar.foreground
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.bodySmall
@@ -719,7 +719,7 @@ Panel {
                   Layout.fillWidth: true
                   text: root.editPassword
                   password: !root.showPassword
-                  placeholderText: "Contraseña WPA2"
+                  placeholderText: Model.tr("wpa2Placeholder")
                   onTextChanged: root.editPassword = text
                 }
 
@@ -732,7 +732,7 @@ Panel {
 
               // Band selection
               Text {
-                text: "Banda de Frecuencia:"
+                text: Model.tr("bandLabel")
                 color: root.bar.foreground
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.bodySmall
@@ -766,7 +766,7 @@ Panel {
 
               // Security mode selection
               Text {
-                text: "Seguridad:"
+                text: Model.tr("securityLabel")
                 color: root.bar.foreground
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.bodySmall
@@ -789,7 +789,7 @@ Panel {
 
                 Button {
                   Layout.fillWidth: true
-                  text: "Red Abierta"
+                  text: Model.tr("openNetwork")
                   fontFamily: root.bar.fontFamily
                   fontSize: Style.font.bodySmall
                   bordered: true
@@ -801,7 +801,7 @@ Panel {
               // Save & Apply Button
               Button {
                 width: parent.width
-                text: root.active ? "󰄬 Guardar y Reiniciar Hotspot" : "󰄬 Guardar Configuración"
+                text: Model.tr(root.active ? "saveRestart" : "saveSettings")
                 fontFamily: root.bar.fontFamily
                 fontSize: Style.font.bodySmall
                 bordered: true
@@ -828,7 +828,7 @@ Panel {
             spacing: Style.space(6)
 
             Text {
-              text: "Dispositivos Conectados"
+              text: Model.tr("connectedDevices")
               color: root.bar.foreground
               font.family: root.bar.fontFamily
               font.pixelSize: Style.font.body
@@ -889,7 +889,7 @@ Panel {
                     spacing: Style.space(2)
 
                     Text {
-                      text: modelData.hostname || modelData.mac || "Dispositivo"
+                      text: modelData.hostname || modelData.mac || Model.tr("device")
                       color: root.bar.foreground
                       font.family: root.bar.fontFamily
                       font.pixelSize: Style.font.bodySmall
@@ -917,7 +917,7 @@ Panel {
                     font.pixelSize: Style.font.body
                     PanelToolTip {
                       visible: parent.containsMouse
-                      text: "Señal: " + (modelData.signal || "-60") + " dBm"
+                      text: Model.tr("signalLabel") + (modelData.signal || "-60") + " dBm"
                       fontFamily: root.bar.fontFamily
                     }
                   }
@@ -958,7 +958,7 @@ Panel {
 
             Text {
               anchors.centerIn: parent
-              text: root.active ? "No hay dispositivos conectados aún" : "Activa el Hotspot para compartir conexión"
+              text: Model.tr(root.active ? "noDevices" : "enableToShare")
               color: root.bar.foreground
               opacity: 0.5
               font.family: root.bar.fontFamily
